@@ -1,0 +1,83 @@
+{
+  "name": "theaudio-app",
+  "version": "0.1.0",
+  "description": "TheAudio.app",
+  "author": "DevTheDiv",
+  "main": "electron.cjs",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:renderer": "vite",
+    "dev:main": "electron .",
+    "build": "vite build",
+    "package": "electron-builder --publish never",
+    "preview": "vite preview"
+  },
+  "build": {
+    "appId": "app.theaudio",
+    "productName": "TheAudio.app",
+    "executableName": "TheAudio.app",
+    "copyright": "Copyright © 2025 DevTheDiv",
+    "directories": {
+      "output": "../build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.cjs",
+      "preload.cjs",
+      "assets/**/*",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../Source/theaudioapp/x64/Release",
+        "to": "app",
+        "filter": [
+          "theaudioapp.exe",
+          "settings.json"
+        ]
+      },
+      {
+        "from": "../Source/tools/soundvolumeview-x64",
+        "to": "app/tools/soundvolumeview-x64"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "TheAudio.app",
+      "uninstallDisplayName": "TheAudio.app",
+      "perMachine": true
+    }
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "vite": "^6.0.5",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "@mui/icons-material": "^6.4.8",
+    "@mui/material": "^6.4.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.5"
+  }
+}

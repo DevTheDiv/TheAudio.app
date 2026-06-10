@@ -1,0 +1,23 @@
+tests/
+examples/
+build/
+ui/node_modules/
+ui/dist/
+Source/theaudioapp/x64/
+Source/theaudioapp/.vs/
+*.user
+*.suo
+.vs/
+Driver/SynchronousAudioRouter
+
+# Claude Code local state
+.claude/
+CLAUDE.md
+
+# Runtime data
+Source/theaudioapp/settings.json
+*.log
+*.pdb
+
+# Electron packaging
+ui/.vite/
