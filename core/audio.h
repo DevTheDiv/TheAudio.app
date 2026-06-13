@@ -8,8 +8,17 @@
 #include "types.h"
 
 // Set by notification clients and consumed by the main loop.
-extern bool   g_needsRefresh;
-extern HANDLE g_refreshEvent;
+// g_needsEndpointRefresh: device added/removed/state-changed — re-enumerate endpoints + sessions.
+// g_needsSessionRefresh:  new audio session created — re-enumerate sessions only.
+// g_sessionRetryUntilTick: GetTickCount64 deadline; main loop retries RefreshSessionCache every
+//   tick until this passes, working around the race where OnSessionCreated fires before
+//   GetSessionEnumerator includes the new session.
+// All written from COM callback threads, so they must be atomic.
+#include <atomic>
+extern std::atomic<bool>     g_needsEndpointRefresh;
+extern std::atomic<bool>     g_needsSessionRefresh;
+extern std::atomic<uint64_t> g_sessionRetryUntilTick;
+extern HANDLE                g_refreshEvent;
 
 // ── Notification clients ──────────────────────────────────────────────────────
 
@@ -69,6 +78,6 @@ void SetDeviceMute(const std::wstring& deviceId, bool muted);
 
 // ── IPC emission ──────────────────────────────────────────────────────────────
 
-void EmitStatus();
+void EmitStatus(IMMDeviceEnumerator* de);
 void EmitSessions(const std::vector<SessionInfo>& sessions);
 void EmitEndpoints(const std::vector<EndpointInfo>& endpoints);

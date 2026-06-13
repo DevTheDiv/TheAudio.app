@@ -18,10 +18,13 @@
 #include "audio.h"
 #include "routing.h"
 #include "utils.h"
+#include "channels.h"
 
 // ── Shared globals ────────────────────────────────────────────────────────────
-bool   g_needsRefresh = true;
-HANDLE g_refreshEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+std::atomic<bool>     g_needsEndpointRefresh{ true };
+std::atomic<bool>     g_needsSessionRefresh{ false };
+std::atomic<uint64_t> g_sessionRetryUntilTick{ 0 };
+HANDLE                g_refreshEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
 // ── File-private state ────────────────────────────────────────────────────────
 static std::vector<CachedSession>              g_sessionCache;
@@ -58,10 +61,10 @@ STDMETHODIMP DeviceNotificationClient::QueryInterface(REFIID riid, void** ppv) {
 }
 STDMETHODIMP_(ULONG) DeviceNotificationClient::AddRef()  { return InterlockedIncrement(&m_refs); }
 STDMETHODIMP_(ULONG) DeviceNotificationClient::Release() { LONG r = InterlockedDecrement(&m_refs); if (!r) delete this; return r; }
-STDMETHODIMP DeviceNotificationClient::OnDeviceStateChanged(LPCWSTR, DWORD)              { g_needsRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
-STDMETHODIMP DeviceNotificationClient::OnDeviceAdded(LPCWSTR)                            { g_needsRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
-STDMETHODIMP DeviceNotificationClient::OnDeviceRemoved(LPCWSTR)                          { g_needsRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
-STDMETHODIMP DeviceNotificationClient::OnDefaultDeviceChanged(EDataFlow, ERole, LPCWSTR) { g_needsRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
+STDMETHODIMP DeviceNotificationClient::OnDeviceStateChanged(LPCWSTR, DWORD)              { g_needsEndpointRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
+STDMETHODIMP DeviceNotificationClient::OnDeviceAdded(LPCWSTR)                            { g_needsEndpointRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
+STDMETHODIMP DeviceNotificationClient::OnDeviceRemoved(LPCWSTR)                          { g_needsEndpointRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
+STDMETHODIMP DeviceNotificationClient::OnDefaultDeviceChanged(EDataFlow, ERole, LPCWSTR) { g_needsEndpointRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
 STDMETHODIMP DeviceNotificationClient::OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) { return S_OK; }
 
 STDMETHODIMP SessionNotificationClient::QueryInterface(REFIID riid, void** ppv) {
@@ -71,7 +74,15 @@ STDMETHODIMP SessionNotificationClient::QueryInterface(REFIID riid, void** ppv) 
 }
 STDMETHODIMP_(ULONG) SessionNotificationClient::AddRef()  { return InterlockedIncrement(&m_refs); }
 STDMETHODIMP_(ULONG) SessionNotificationClient::Release() { LONG r = InterlockedDecrement(&m_refs); if (!r) delete this; return r; }
-STDMETHODIMP SessionNotificationClient::OnSessionCreated(IAudioSessionControl*) { g_needsRefresh = true; SetEvent(g_refreshEvent); return S_OK; }
+STDMETHODIMP SessionNotificationClient::OnSessionCreated(IAudioSessionControl*) {
+    // OnSessionCreated fires before GetSessionEnumerator includes the new session.
+    // Set a 2-second retry window so the main loop keeps calling RefreshSessionCache
+    // until the session actually shows up in the enumerator.
+    g_sessionRetryUntilTick = GetTickCount64() + 2000;
+    g_needsSessionRefresh = true;
+    SetEvent(g_refreshEvent);
+    return S_OK;
+}
 
 // ── Audio management ──────────────────────────────────────────────────────────
 
@@ -249,7 +260,19 @@ std::vector<EndpointInfo> EnumerateEndpoints(IMMDeviceEnumerator* enumerator) {
                 PropVariantClear(&pv);
                 props->Release();
             }
-            out.push_back({ id, name.empty() ? L"Unknown" : name, "physical" });
+            std::wstring n = name.empty() ? L"Unknown" : name;
+            std::wstring key;
+            std::string type = "physical";
+            if (IsVirtualEndpoint(n.c_str())) {
+                type = "virtual";
+                for (const auto& vc : VIRTUAL_CHANNELS) {
+                    if (n.find(vc.name) != std::wstring::npos) {
+                        key = vc.key;
+                        break;
+                    }
+                }
+            }
+            out.push_back({ id, n, type, key });
 
             // Cache peak meter and volume control for this endpoint
             IAudioMeterInformation* meter = nullptr;
@@ -418,8 +441,27 @@ void SetDeviceMute(const std::wstring& deviceId, bool muted) {
         it->second->SetMute(muted ? TRUE : FALSE, nullptr);
 }
 
-void EmitStatus() {
-    std::cout << "{\"type\":\"status\",\"running\":true}\n" << std::flush;
+void EmitStatus(IMMDeviceEnumerator* de) {
+    bool driverInstalled = false;
+    IMMDeviceCollection* col = nullptr;
+    if (SUCCEEDED(de->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &col))) {
+        UINT n = 0; col->GetCount(&n);
+        for (UINT i = 0; i < n && !driverInstalled; i++) {
+            IMMDevice* dev = nullptr;
+            if (FAILED(col->Item(i, &dev))) continue;
+            IPropertyStore* ps = nullptr;
+            if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &ps))) {
+                PROPVARIANT pv; PropVariantInit(&pv);
+                if (SUCCEEDED(ps->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR)
+                    driverInstalled = IsVirtualEndpoint(pv.pwszVal);
+                PropVariantClear(&pv); ps->Release();
+            }
+            dev->Release();
+        }
+        col->Release();
+    }
+    std::cout << "{\"type\":\"status\",\"running\":true,\"driverInstalled\":"
+              << (driverInstalled ? "true" : "false") << "}\n" << std::flush;
 }
 
 void EmitSessions(const std::vector<SessionInfo>& sessions) {
@@ -435,7 +477,10 @@ void EmitEndpoints(const std::vector<EndpointInfo>& endpoints) {
     std::ostringstream j; j << "{\"type\":\"endpoints\",\"endpoints\":[";
     for (size_t i = 0; i < endpoints.size(); i++) {
         const auto& e = endpoints[i]; if (i) j << ",";
-        j << "{\"id\":" << JsonStr(WstrToUtf8(e.id)) << ",\"name\":" << JsonStr(WstrToUtf8(e.name)) << ",\"type\":\"" << e.type << "\"}";
+        j << "{\"id\":" << JsonStr(WstrToUtf8(e.id)) 
+          << ",\"name\":" << JsonStr(WstrToUtf8(e.name)) 
+          << ",\"type\":\"" << e.type << "\""
+          << ",\"key\":" << JsonStr(WstrToUtf8(e.key)) << "}";
     }
     j << "]}\n"; std::cout << j.str() << std::flush;
 }

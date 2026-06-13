@@ -10,15 +10,15 @@ import SpeakerIcon        from '@mui/icons-material/Speaker';
 import PlayCircleIcon     from '@mui/icons-material/PlayCircle';
 import { AudioCtx } from '../App.jsx';
 
-const SAR_BASE_NAMES = [
-  'TheAudio.app Spacial Audio',
+const VIRTUAL_BASE_NAMES = [
+  'TheAudio.app Spatial Audio',
   'TheAudio.app Game',
   'TheAudio.app Voice',
   'TheAudio.app Music',
 ];
 
 function getLevelIndex(endpointName) {
-  return SAR_BASE_NAMES.findIndex(n => endpointName.startsWith(n));
+  return VIRTUAL_BASE_NAMES.findIndex(n => endpointName.startsWith(n));
 }
 
 function LevelBar({ level }) {
@@ -71,29 +71,30 @@ function sarIcon(type) {
   return <DeviceHubIcon sx={{ color: 'secondary.main', fontSize: 20 }} />;
 }
 
-function SarRouteRow({ endpoint, physical, savedTarget, level, onSave }) {
-  const [target, setTarget] = useState(savedTarget ?? 'Default');
-  const displayName = endpoint.name.replace(/\s*\(Synchronous Audio Router\)$/, '');
+function VirtualRouteRow({ endpoint, physical, savedTarget, level, onSave }) {
+  const [target, setTarget] = useState(savedTarget ?? 'none');
+  const displayName = endpoint.name.replace(/^TheAudio\.app\s+/, '').replace(/\s*\(Synchronous Audio Router\)$/, '');
+  const channelKey  = endpoint.name.replace(/^TheAudio\.app\s+/, '').split(' ')[0]; // "Games", "Media", "Voice"
 
   useEffect(() => {
-    setTarget(savedTarget ?? 'Default');
+    setTarget(savedTarget ?? 'none');
   }, [savedTarget]);
 
   function handleChange(e) {
     const val = e.target.value;
     setTarget(val);
-    onSave(endpoint.name, val);
+    onSave(channelKey, val);
   }
 
   return (
     <Paper variant="outlined" sx={{ px: 2, py: 1.5, display: 'flex', alignItems: 'center', gap: 2 }}>
-      {/* SAR endpoint label */}
+      {/* Virtual endpoint label */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 200 }}>
         {sarIcon(endpoint.type)}
         <Box>
           <Typography variant="body2" fontWeight={600}>{displayName}</Typography>
           <Chip
-            label={endpoint.type === 'spatial' ? 'Spatial' : 'SAR'}
+            label={endpoint.type === 'spatial' ? 'Spatial' : 'Virtual'}
             color={endpoint.type === 'spatial' ? 'primary' : 'secondary'}
             size="small" variant="outlined"
             sx={{ fontSize: 10, height: 16, mt: 0.25 }}
@@ -115,13 +116,23 @@ function SarRouteRow({ endpoint, physical, savedTarget, level, onSave }) {
         onChange={handleChange}
         size="small"
         sx={{ flex: 1, minWidth: 180, fontSize: 13 }}
-        renderValue={(val) => (
-          <Stack direction="row" alignItems="center" gap={1}>
-            <SpeakerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-            <span>{val}</span>
-          </Stack>
-        )}
+        renderValue={(val) => {
+          const dev = physical.find(d => d.id === val);
+          const label = val === 'none' ? 'No Output' : val === 'Default' ? 'Default' : dev ? dev.name : val;
+          return (
+            <Stack direction="row" alignItems="center" gap={1}>
+              <SpeakerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+              <span>{label}</span>
+            </Stack>
+          );
+        }}
       >
+        <MenuItem value="none">
+          <Stack direction="row" alignItems="center" gap={1}>
+            <SpeakerIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+            <span style={{ color: 'rgba(255,255,255,0.4)' }}>No Output</span>
+          </Stack>
+        </MenuItem>
         <MenuItem value="Default">
           <Stack direction="row" alignItems="center" gap={1}>
             <SpeakerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
@@ -129,7 +140,7 @@ function SarRouteRow({ endpoint, physical, savedTarget, level, onSave }) {
           </Stack>
         </MenuItem>
         {physical.map(dev => (
-          <MenuItem key={dev.id} value={dev.name}>
+          <MenuItem key={dev.id} value={dev.id}>
             <Stack direction="row" alignItems="center" gap={1}>
               <SpeakerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
               <span>{dev.name}</span>
@@ -143,21 +154,20 @@ function SarRouteRow({ endpoint, physical, savedTarget, level, onSave }) {
 
 export default function Routing() {
   const { endpoints, levels } = useContext(AudioCtx);
-  const [sarRouting, setSarRouting] = useState({});
+  const [channelOutputs, setChannelOutputs] = useState({});
 
-  const sarEndpoints = endpoints.filter(e => e.type === 'sar' || e.type === 'spatial');
-  const physical     = endpoints.filter(e => e.type === 'physical');
+  const virtualEndpoints = endpoints.filter(e => e.type === 'sar' || e.type === 'spatial' || e.type === 'virtual');
+  const physical         = endpoints.filter(e => e.type === 'physical');
 
   useEffect(() => {
     window.api?.getSettings().then(s => {
-      setSarRouting(s.sarRouting ?? {});
+      setChannelOutputs(s.channelOutputs ?? {});
     });
   }, []);
 
-  function handleSave(endpointName, targetDevice) {
-    const next = { ...sarRouting, [endpointName]: targetDevice };
-    setSarRouting(next);
-    window.api?.saveSettings({ sarRouting: next });
+  function handleSave(channelKey, deviceId) {
+    setChannelOutputs(prev => ({ ...prev, [channelKey]: deviceId }));
+    window.api?.setChannelOutput(channelKey, deviceId);
   }
 
   return (
@@ -170,21 +180,22 @@ export default function Routing() {
         </Typography>
       </Box>
 
-      {sarEndpoints.length === 0 && (
+      {virtualEndpoints.length === 0 && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          No SAR virtual endpoints detected. SAR must be installed and running.
+          No virtual endpoints detected. The audio driver must be installed and running.
         </Alert>
       )}
 
       <Stack spacing={1}>
-        {sarEndpoints.map(ep => {
+        {virtualEndpoints.map(ep => {
           const idx = getLevelIndex(ep.name);
+          const ck  = ep.name.replace(/^TheAudio\.app\s+/, '').split(' ')[0];
           return (
-            <SarRouteRow
+            <VirtualRouteRow
               key={ep.id}
               endpoint={ep}
               physical={physical}
-              savedTarget={sarRouting[ep.name]}
+              savedTarget={channelOutputs[ck]}
               level={idx >= 0 ? (levels[idx] ?? 0) : 0}
               onSave={handleSave}
             />
@@ -192,7 +203,7 @@ export default function Routing() {
         })}
       </Stack>
 
-      {physical.length === 0 && sarEndpoints.length > 0 && (
+      {physical.length === 0 && virtualEndpoints.length > 0 && (
         <Box sx={{ mt: 2 }}>
           <Alert severity="warning">
             No physical output devices found. Check that audio devices are connected.
@@ -200,7 +211,7 @@ export default function Routing() {
         </Box>
       )}
 
-      {sarEndpoints.length > 0 && physical.length > 0 && (
+      {virtualEndpoints.length > 0 && physical.length > 0 && (
         <>
           <Divider sx={{ my: 3 }} />
           <Typography variant="caption" color="text.disabled">

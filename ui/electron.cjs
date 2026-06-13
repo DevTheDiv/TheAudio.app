@@ -1,6 +1,6 @@
 'use strict';
 const {
-  app, BrowserWindow, ipcMain, Tray, Menu, nativeImage,
+  app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog,
 } = require('electron');
 const path  = require('path');
 const fs    = require('fs');
@@ -11,15 +11,30 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('app.theaudio');
 }
 
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    mainWindow.setSkipTaskbar(false);
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 // Redirect all Electron user-data storage away from %APPDATA% to %PROGRAMDATA%
 const USER_DATA_DIR = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'TheAudio.app');
 app.setPath('userData', USER_DATA_DIR);
 
 /* ── constants ──────────────────────────────────────────────────── */
-const isDev   = !app.isPackaged;
-const APP_DIR = isDev
-  ? path.join(__dirname, '..', 'Source', 'theaudioapp', 'x64', 'Release')
+const isDev      = !app.isPackaged;
+const APP_DIR    = isDev
+  ? path.join(__dirname, '..', 'core', 'x64', 'Release')
   : path.join(process.resourcesPath, 'app');
+const DRIVER_DIR = isDev
+  ? path.join(__dirname, '..', 'Driver', 'VirtualAudioDriver')
+  : path.join(process.resourcesPath, 'driver');
 
 const MAIN_EXE      = path.join(APP_DIR, 'theaudioapp.exe');
 const SETTINGS_PATH = path.join(APP_DIR, 'settings.json');
@@ -30,6 +45,7 @@ const PROFILES_PATH = path.join(USER_DATA_DIR, 'profiles.json');
 let mainWindow  = null;
 let tray        = null;
 let coreProcess = null;
+let isQuitting  = false;
 let lastSessions  = [];
 let lastEndpoints = [];
 let lastStatus    = { running: false };
@@ -68,8 +84,14 @@ function writeProfiles(profiles) {
 }
 
 /* ── C++ core process ───────────────────────────────────────────── */
-function startCore() {
+async function startCore() {
   if (coreProcess || !fs.existsSync(MAIN_EXE)) return;
+  // Kill any orphaned instance holding the single-instance mutex from a previous crash,
+  // then wait 300ms for the OS to fully release the mutex before spawning a new one.
+  if (process.platform === 'win32') {
+    try { require('child_process').execSync('taskkill /IM theaudioapp.exe /F', { timeout: 2000 }); } catch {}
+    await new Promise(r => setTimeout(r, 300));
+  }
 
   coreProcess = spawn(MAIN_EXE, [], { stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -97,8 +119,15 @@ function startCore() {
 }
 
 function stopCore() {
-  coreProcess?.kill();
+  if (!coreProcess) return;
+  const pid = coreProcess.pid;
+  // Ask C++ to exit cleanly first — it breaks its main loop, releases mutex, and exits.
+  try { coreProcess.stdin?.write(JSON.stringify({ cmd: 'quit' }) + '\n'); } catch {}
+  try { coreProcess.kill(); } catch {}
   coreProcess = null;
+  if (process.platform === 'win32' && pid) {
+    try { require('child_process').execSync(`taskkill /PID ${pid} /F /T`, { timeout: 3000 }); } catch {}
+  }
 }
 
 function sendCmd(obj) {
@@ -118,7 +147,7 @@ function handleCoreMessage(msg) {
       mainWindow.webContents.send('endpoints', msg.endpoints);
       break;
     case 'status':
-      lastStatus = { running: msg.running };
+      lastStatus = { running: msg.running, driverInstalled: msg.driverInstalled ?? false };
       mainWindow.webContents.send('status', lastStatus);
       break;
     case 'levels':
@@ -156,7 +185,12 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
   }
 
-  mainWindow.on('close', (e) => { e.preventDefault(); mainWindow.setSkipTaskbar(true); mainWindow.hide(); });
+  mainWindow.on('close', (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    mainWindow.setSkipTaskbar(true);
+    mainWindow.hide();
+  });
 
   mainWindow.webContents.on('did-finish-load', () => {
     if (lastSessions.length)  mainWindow.webContents.send('sessions',  lastSessions);
@@ -197,8 +231,13 @@ ipcMain.handle('apply-profile',  (_e, name)        => {
   writeSettings({ routing: p.routing });
   if (p.volumes) for (const [n, v] of Object.entries(p.volumes)) sendCmd({ cmd: 'volume', name: n, value: v });
 });
-ipcMain.handle('get-settings',   ()                => readSettings());
-ipcMain.handle('save-settings',  (_e, s)           => writeSettings(s));
+ipcMain.handle('get-settings',      ()             => readSettings());
+ipcMain.handle('save-settings',     (_e, s)        => writeSettings(s));
+ipcMain.handle('set-channel-output', (_e, key, deviceId) => {
+  if (!settingsCache) readSettings();
+  settingsCache.channelOutputs = { ...(settingsCache.channelOutputs || {}), [key]: deviceId };
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settingsCache, null, 2), 'utf8');
+});
 
 
 const iconCache = new Map();
@@ -222,10 +261,59 @@ ipcMain.handle('set-system-mute',    (_e, muted)          => sendCmd({ cmd: 'sys
 ipcMain.handle('set-device-volume',  (_e, deviceId, vol)  => sendCmd({ cmd: 'deviceVolume', deviceId, value: vol }));
 ipcMain.handle('set-device-mute',    (_e, deviceId, muted)=> sendCmd({ cmd: 'deviceMute',   deviceId, muted }));
 
+ipcMain.handle('install-driver', () => {
+  const scriptPath = path.join(DRIVER_DIR, 'install.ps1');
+  if (!fs.existsSync(scriptPath)) {
+    mainWindow?.webContents.send('driver-log', `Error: install.ps1 not found at ${scriptPath}`);
+    mainWindow?.webContents.send('driver-done', { success: false });
+    return;
+  }
+  const child = spawn('powershell', [
+    '-ExecutionPolicy', 'Bypass', '-NonInteractive', '-File', scriptPath,
+  ], { cwd: DRIVER_DIR });
+  const sendLine = (line) => mainWindow?.webContents.send('driver-log', line.trimEnd());
+  child.stdout?.on('data', (d) => d.toString().split('\n').filter(l => l.trim()).forEach(sendLine));
+  child.stderr?.on('data', (d) => d.toString().split('\n').filter(l => l.trim()).forEach(l => sendLine(`[warn] ${l}`)));
+  child.on('exit', (code) => mainWindow?.webContents.send('driver-done', { success: code === 0, exitCode: code }));
+});
+
+ipcMain.handle('uninstall-driver', () => {
+  const cmd = `
+    $drivers = pnputil /enum-drivers | Select-String -Pattern 'virtualaudiodriver' -Context 5,0
+    foreach ($m in $drivers) {
+      $oem = ($m.Context.PreContext | Select-String 'Published Name').Line -replace '.*:\\s*',''
+      if ($oem) { pnputil /delete-driver $oem.Trim() /uninstall /force }
+    }
+    $null = devcon remove Root\\VirtualAudioDriver 2>&1
+    Write-Host 'Uninstall complete.'
+  `;
+  const child = spawn('powershell', ['-ExecutionPolicy', 'Bypass', '-NonInteractive', '-Command', cmd]);
+  const sendLine = (line) => mainWindow?.webContents.send('driver-log', line.trimEnd());
+  child.stdout?.on('data', (d) => d.toString().split('\n').filter(l => l.trim()).forEach(sendLine));
+  child.stderr?.on('data', (d) => d.toString().split('\n').filter(l => l.trim()).forEach(l => sendLine(`[warn] ${l}`)));
+  child.on('exit', (code) => mainWindow?.webContents.send('driver-done', { success: code === 0, exitCode: code }));
+});
+
+ipcMain.handle('get-testsigning', () => {
+  try {
+    const out = require('child_process').execSync('bcdedit /enum "{current}"', { encoding: 'utf8', timeout: 5000 });
+    return /testsigning\s+yes/i.test(out);
+  } catch { return false; }
+});
+
+ipcMain.handle('set-testsigning', () => {
+  try {
+    require('child_process').execSync('bcdedit /set testsigning on', { encoding: 'utf8', timeout: 5000 });
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-close',    () => mainWindow?.hide());
 
 /* ── app lifecycle ──────────────────────────────────────────────── */
 app.whenReady().then(() => { createWindow(); createTray(); startCore(); });
 app.on('window-all-closed', (e) => e.preventDefault());
-app.on('before-quit', () => { stopCore(); tray?.destroy(); });
+app.on('before-quit', () => { isQuitting = true; stopCore(); tray?.destroy(); });

@@ -1,0 +1,141 @@
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %ManufacturerName%
+DriverVer   = 06/12/2026,1.0.0.3
+CatalogFile.ntamd64 = VirtualAudioDriver.cat
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = "VirtualAudioDriver Disk"
+
+[SourceDisksFiles]
+VirtualAudioDriver.sys = 1
+
+[Manufacturer]
+%ManufacturerName% = Standard, NTamd64
+
+[Standard.NTamd64]
+%DeviceDesc% = VirtualAudio_Install, Root\VirtualAudioDriver
+
+[VirtualAudio_Install.NT]
+Include    = ks.inf, wdmaudio.inf
+Needs      = KS.Registration, WDMAUDIO.Registration
+CopyFiles  = VirtualAudio_CopyFiles
+
+[VirtualAudio_CopyFiles]
+VirtualAudioDriver.sys
+
+[VirtualAudio_Install.NT.Services]
+AddService = VirtualAudioDriver, %SPSVCINST_ASSOCSERVICE%, VirtualAudio_Service
+
+[VirtualAudio_Service]
+DisplayName    = %ServiceDesc%
+ServiceType    = %SERVICE_KERNEL_DRIVER%
+StartType      = %SERVICE_DEMAND_START%
+ErrorControl   = %SERVICE_ERROR_NORMAL%
+ServiceBinary  = %12%\VirtualAudioDriver.sys
+
+[VirtualAudio_Install.NT.Interfaces]
+; Channel 0: Games
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave0%, Wave0.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave0%, Wave0.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave0%, Wave0.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topo0%, Topo0.Interface
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topo0%, Topo0.Interface
+; Channel 1: Media
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave1%, Wave1.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave1%, Wave1.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave1%, Wave1.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topo1%, Topo1.Interface
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topo1%, Topo1.Interface
+; Channel 2: Voice
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave2%, Wave2.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave2%, Wave2.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave2%, Wave2.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topo2%, Topo2.Interface
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topo2%, Topo2.Interface
+
+; --- Wave interface sections (proxy CLSID required for KS) ---
+[Wave0.Interface]
+AddReg = Wave.Interface.AddReg
+[Wave1.Interface]
+AddReg = Wave.Interface.AddReg
+[Wave2.Interface]
+AddReg = Wave.Interface.AddReg
+
+[Wave.Interface.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+
+; --- Topology interface sections ---
+; HKR root values: FriendlyName + CLSID
+; HKR,MSEP\0 values: AudioEndpointBuilder reads these when processing the
+;   interface-enabled notification and promotes them into the MMDEVAPI endpoint
+;   property store.  {a45c254e},2 = PKEY_Device_DeviceDesc — this is what
+;   Windows Sound Settings shows as the device name.
+;   Writing from the INF guarantees the values exist before AudioEndpointBuilder
+;   ever sees the enabled interface.
+[Topo0.Interface]
+AddReg      = Topo0.Interface.AddReg
+AddProperty = Topo0.Interface.AddProperty
+[Topo0.Interface.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,"TheAudio.app Games"
+HKR,MSEP\0,"{a45c254e-df1c-4efd-8020-67d146a850e0},2",,"TheAudio.app Games"
+HKR,MSEP\0,"{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},7",0x00010001,1
+HKR,MSEP\0,"{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},2",,"{00000000-0000-0000-0000-000000000000}"
+[Topo0.Interface.AddProperty]
+{026E516E-B814-414B-83CD-856D6FEF4822},2,,,"TheAudio.app Games"
+
+[Topo1.Interface]
+AddReg      = Topo1.Interface.AddReg
+AddProperty = Topo1.Interface.AddProperty
+[Topo1.Interface.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,"TheAudio.app Media"
+HKR,MSEP\0,"{a45c254e-df1c-4efd-8020-67d146a850e0},2",,"TheAudio.app Media"
+HKR,MSEP\0,"{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},7",0x00010001,1
+HKR,MSEP\0,"{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},2",,"{00000000-0000-0000-0000-000000000000}"
+[Topo1.Interface.AddProperty]
+{026E516E-B814-414B-83CD-856D6FEF4822},2,,,"TheAudio.app Media"
+
+[Topo2.Interface]
+AddReg      = Topo2.Interface.AddReg
+AddProperty = Topo2.Interface.AddProperty
+[Topo2.Interface.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,"TheAudio.app Voice"
+HKR,MSEP\0,"{a45c254e-df1c-4efd-8020-67d146a850e0},2",,"TheAudio.app Voice"
+HKR,MSEP\0,"{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},7",0x00010001,1
+HKR,MSEP\0,"{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},2",,"{00000000-0000-0000-0000-000000000000}"
+[Topo2.Interface.AddProperty]
+{026E516E-B814-414B-83CD-856D6FEF4822},2,,,"TheAudio.app Voice"
+
+[Strings]
+ManufacturerName   = "TheAudio.app"
+DeviceDesc         = "TheAudio.app Virtual Audio"
+ServiceDesc        = "TheAudio.app Virtual Audio Driver"
+
+; Reference strings must match PcRegisterSubdevice names exactly
+KSNAME_Wave0 = "WAVE0"
+KSNAME_Topo0 = "TOPO0"
+KSNAME_Wave1 = "WAVE1"
+KSNAME_Topo1 = "TOPO1"
+KSNAME_Wave2 = "WAVE2"
+KSNAME_Topo2 = "TOPO2"
+
+Proxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+
+; KS category GUIDs
+KSCATEGORY_AUDIO    = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER   = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME = "{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+
+SPSVCINST_ASSOCSERVICE = 0x00000002
+SERVICE_KERNEL_DRIVER  = 0x00000001
+SERVICE_DEMAND_START   = 0x00000003
+SERVICE_ERROR_NORMAL   = 0x00000001

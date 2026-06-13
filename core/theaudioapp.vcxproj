@@ -72,12 +72,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="audio.cpp" />
+    <ClCompile Include="bridge.cpp" />
     <ClCompile Include="routing.cpp" />
     <ClCompile Include="theaudioapp.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="audio.h" />
+    <ClInclude Include="bridge.h" />
+    <ClInclude Include="channels.h" />
     <ClInclude Include="routing.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="utils.h" />

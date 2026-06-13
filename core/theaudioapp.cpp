@@ -10,6 +10,7 @@
 #include <iostream>
 #include "audio.h"
 #include "routing.h"
+#include "bridge.h"
 #include "utils.h"
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
@@ -54,7 +55,8 @@ static AppSettings LoadSettings(const std::wstring& path) {
         return res;
     };
 
-    std::string robj = extract("routing"); if (!robj.empty()) s.routing = parseMapSS(robj);
+    std::string robj = extract("routing");       if (!robj.empty()) s.routing       = parseMapSS(robj);
+    std::string cobj = extract("channelOutputs"); if (!cobj.empty()) s.channelOutputs = parseMapSS(cobj);
     s.defaultDevice = Utf8ToWstr(extract("defaultDevice"));
     return s;
 }
@@ -136,18 +138,20 @@ int main() {
     AppSettings settings = LoadSettings(sPath);
 
     StartSilentStream(de);
+    StartBridges(de, settings.channelOutputs);
     StartStdinReader();
 
     DeviceNotificationClient* dn = new DeviceNotificationClient();
     de->RegisterEndpointNotificationCallback(dn);
     RegisterSessionNotifications(de);
 
-    EmitStatus();
+    EmitStatus(de);
     auto endpoints = EnumerateEndpoints(de);
     EmitEndpoints(endpoints);
 
-    auto lastEPR  = std::chrono::steady_clock::now();
-    auto lastSync = std::chrono::steady_clock::now();
+    auto lastEPR        = std::chrono::steady_clock::now();
+    auto lastSync       = std::chrono::steady_clock::now();
+    auto lastSessRefresh = std::chrono::steady_clock::now();
     FILETIME lastMT{};
 
     std::thread([&]() {
@@ -170,15 +174,30 @@ int main() {
         if (CompareFileTime(&fa.ftLastWriteTime, &lastMT) != 0) {
             lastMT = fa.ftLastWriteTime;
             settings = LoadSettings(sPath);
+            for (const auto& [key, devId] : settings.channelOutputs)
+                SetBridgeOutput(key, devId);
         }
 
-        // Re-enumerate endpoints and sessions when devices change
-        if (g_needsRefresh) {
+        // Device added/removed/state-changed — re-enumerate endpoints then sessions
+        if (g_needsEndpointRefresh.exchange(false)) {
             endpoints = EnumerateEndpoints(de);
             EmitEndpoints(endpoints);
+            EmitStatus(de);
             RegisterSessionNotifications(de);
             RefreshSessionCache(de, settings, endpoints);
-            g_needsRefresh = false;
+            lastSessRefresh = now;
+        }
+
+        // New audio session: keep retrying until the retry window expires.
+        // OnSessionCreated fires before GetSessionEnumerator includes the new session, so a
+        // single refresh on the notification tick often misses it. We retry every 41ms for up
+        // to 2 seconds (set in OnSessionCreated) until the session appears. The 3-second timer
+        // is a backstop for any notifications we failed to receive.
+        g_needsSessionRefresh.exchange(false); // consume — retry window drives the loop
+        bool inRetryWindow = GetTickCount64() < g_sessionRetryUntilTick;
+        if (inRetryWindow || now - lastSessRefresh > std::chrono::seconds(1)) {
+            RefreshSessionCache(de, settings, endpoints);
+            lastSessRefresh = now;
         }
 
         if (now - lastEPR > std::chrono::seconds(15)) {
@@ -195,9 +214,11 @@ int main() {
         // Drain stdin commands
         std::queue<Cmd> cmds;
         { std::lock_guard<std::mutex> lk(g_cmdMutex); cmds.swap(g_cmdQueue); }
+        bool quit = false;
         while (!cmds.empty()) {
             auto& c = cmds.front();
-            if      (c.type == "volume")       SetSessionVolume(c.name, c.value);
+            if      (c.type == "quit")         quit = true;
+            else if (c.type == "volume")       SetSessionVolume(c.name, c.value);
             else if (c.type == "mute")         SetSessionMute(c.name, c.bval);
             else if (c.type == "systemVolume") SetSystemVolume(de, c.value);
             else if (c.type == "systemMute")   SetSystemMute(de, c.bval);
@@ -205,12 +226,14 @@ int main() {
             else if (c.type == "deviceMute")   SetDeviceMute(c.deviceId, c.bval);
             cmds.pop();
         }
+        if (quit) break;
 
         UpdateSessionsAndEmit(settings, endpoints);
         UpdateEndpointLevelsAndEmit();
         UpdateSystemAndEmit(de);
     }
 
+    StopBridges();
     CoUninitialize();
     return 0;
 }

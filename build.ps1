@@ -1,34 +1,40 @@
 <#
 .SYNOPSIS
-  Full build: compiles C++ (Release x64) then packages the Electron UI.
+  Full build: compiles the driver, C++ core, then packages the Electron UI.
 
 .DESCRIPTION
-  1. Locates MSBuild via vswhere
-  2. Builds Source\theaudioapp\theaudioapp.sln (Release|x64)
-  3. Runs Vite then electron-builder -> output lands in build\
+  1. Builds the VirtualAudioDriver (Kernel Mode)
+  2. Locates MSBuild via vswhere and builds the C++ core
+  3. Runs Vite then electron-builder for the UI -> output lands in build\
 
 .REQUIREMENTS
   - Visual Studio 2022 with "Desktop development with C++" workload
+  - Windows Driver Kit (WDK) for driver compilation
   - Node.js 18+ on PATH
 
 .EXAMPLE
-  .\build.ps1          # full build
-  .\build.ps1 -SkipCpp # skip C++ compilation, re-package UI only
-  .\build.ps1 -SkipUi  # compile C++ only
+  .\build.ps1             # full build
+  .\build.ps1 -Optimize   # full build with kernel-mode optimizations (/O2)
+  .\build.ps1 -SkipDriver # build core and UI only
+  .\build.ps1 -SkipCpp    # skip C++ compilation, re-package UI only
+  .\build.ps1 -SkipUi     # compile driver and core only
 #>
 
 [CmdletBinding()]
 param(
   [switch]$SkipCpp,
-  [switch]$SkipUi
+  [switch]$SkipUi,
+  [switch]$SkipDriver,
+  [switch]$Optimize
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $Root       = $PSScriptRoot
-$SolnFile   = Join-Path $Root 'Source\theaudioapp\theaudioapp.sln'
-$ReleaseDir = Join-Path $Root 'Source\theaudioapp\x64\Release'
+$SolnFile   = Join-Path $Root 'core\theaudioapp.sln'
+$ReleaseDir = Join-Path $Root 'core\x64\Release'
+$DriverDir  = Join-Path $Root 'Driver\VirtualAudioDriver'
 $UiDir      = Join-Path $Root 'ui'
 $BuildDir   = Join-Path $Root 'build'
 
@@ -36,6 +42,24 @@ function Step  ($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan   }
 function Ok    ($msg) { Write-Host "    $msg"   -ForegroundColor Green  }
 function Warn  ($msg) { Write-Host "    !! $msg" -ForegroundColor Yellow }
 function Abort ($msg) { Write-Host "`n[FAIL] $msg" -ForegroundColor Red; exit 1 }
+
+# -- 0. Driver build --------------------------------------------------
+if (-not $SkipDriver) {
+  Step "Building VirtualAudioDriver (Kernel Mode)"
+  if (Test-Path (Join-Path $DriverDir 'build.ps1')) {
+    Push-Location $DriverDir
+    try {
+      $driverArgs = if ($Optimize) { "-Optimize" } else { "" }
+      Invoke-Expression ".\build.ps1 $driverArgs"
+      if ($LASTEXITCODE -ne 0) { Abort "Driver build failed." }
+      Ok "Driver build succeeded -> $DriverDir\out\VirtualAudioDriver.sys"
+    } finally {
+      Pop-Location
+    }
+  } else {
+    Warn "Driver build script not found at $DriverDir\build.ps1"
+  }
+}
 
 # -- 1. C++ build -----------------------------------------------------
 if (-not $SkipCpp) {

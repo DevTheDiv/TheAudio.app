@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A1B2C3D4-1234-5678-ABCD-0123456789AB}</ProjectGuid>
+    <TemplateGuid>{1bc93493-3827-4049-9dea-cf7e00c1e2bd}</TemplateGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>18.0</MinimumVisualStudioVersion>
+    <Configuration>Debug</Configuration>
+    <Platform>x64</Platform>
+    <RootNamespace>VirtualAudioDriver</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>WDM</DriverType>
+    <PlatformToolset>WindowsKernelModeDriver18.0</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+
+  <PropertyGroup>
+    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <TargetName>VirtualAudioDriver</TargetName>
+    <TargetExt>.sys</TargetExt>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(KernelBufferOverflowLib);$(DDK_INC_PATH);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+      <WarningLevel>Level4</WarningLevel>
+      <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>portcls.lib;ks.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
+    </Link>
+    <Inf>
+      <TimeStamp>$(TODAY)</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\adapter.cpp" />
+    <ClCompile Include="src\miniport.cpp" />
+    <ClCompile Include="src\stream.cpp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="src\driver.h" />
+    <ClInclude Include="src\miniport.h" />
+    <ClInclude Include="src\stream.h" />
+    <ClInclude Include="src\topo.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Inf Include="VirtualAudioDriver.inf" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(KMDF_INC_PATH)\..\build\Microsoft.KernelModeDriver.targets" Condition="Exists('$(KMDF_INC_PATH)\..\build\Microsoft.KernelModeDriver.targets')" />
+  </ImportGroup>
+</Project>

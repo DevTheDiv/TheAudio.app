@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <IsKernelModeToolset>true</IsKernelModeToolset>
+    <WDKContentRoot Condition="'$(WDKContentRoot)'==''">$(Registry:HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Kits\Installed Roots@KitsRoot10)</WDKContentRoot>
+    <WDKBuildFolder Condition="'$(WDKBuildFolder)'==''">$(WindowsTargetPlatformVersion)</WDKBuildFolder>
+    <DriverType Condition="'$(DriverType)'==''">WDM</DriverType>
+  </PropertyGroup>
+  <!-- Sets versioning constants and TargetPlatformVersion -->
+  <Import Condition="Exists('$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.Default.props')"
+          Project="$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.Default.props"/>
+  <!-- Sets _NT_TARGET_VERSION via Shared.Props -> OS.Props chain -->
+  <Import Condition="Exists('$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.common.props')"
+          Project="$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.common.props"/>
+  <!-- Kernel-mode defaults (KMDF version, etc.) - needs _NT_TARGET_VERSION -->
+  <Import Condition="Exists('$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.KernelMode.Default.props')"
+          Project="$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.KernelMode.Default.props"/>
+  <Import Condition="Exists('$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.KernelMode.props')"
+          Project="$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.KernelMode.props"/>
+</Project>

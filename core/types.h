@@ -19,12 +19,14 @@ struct SessionInfo {
 
 struct EndpointInfo {
     std::wstring id, name;
-    std::string  type; // "physical"
+    std::string  type; // "physical" | "virtual"
+    std::wstring key;  // logical key for virtual channels ("Games", etc)
 };
 
 struct AppSettings {
     std::map<std::wstring, std::wstring> routing;
     std::wstring                         defaultDevice;
+    std::map<std::wstring, std::wstring> channelOutputs; // "Games"/"Media"/"Voice" -> MMDEVAPI device ID
 };
 
 struct CachedSession {

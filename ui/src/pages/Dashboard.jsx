@@ -4,11 +4,12 @@ import {
   Box, Typography, Slider, Select, MenuItem, IconButton,
   Paper, Stack, Tooltip,
 } from '@mui/material';
-import VolumeUpIcon   from '@mui/icons-material/VolumeUp';
-import VolumeOffIcon  from '@mui/icons-material/VolumeOff';
-import SpeakerIcon    from '@mui/icons-material/Speaker';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import VolumeUpIcon      from '@mui/icons-material/VolumeUp';
+import VolumeOffIcon     from '@mui/icons-material/VolumeOff';
+import SpeakerIcon       from '@mui/icons-material/Speaker';
+import DeviceHubIcon     from '@mui/icons-material/DeviceHub';
+import ExpandMoreIcon    from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon    from '@mui/icons-material/ExpandLess';
 import { AudioCtx } from '../App.jsx';
 
 // Throttle fn to at most once per 41ms (24Hz). Always fires final value.
@@ -47,7 +48,7 @@ const STRIP_SX = {
   bgcolor: 'background.paper',
 };
 
-function DeviceSelect({ value, onChange, physical, disabled = false, hideDefault = false }) {
+function DeviceSelect({ value, onChange, physical, disabled = false, hideDefault = false, showNoOutput = false }) {
   return (
     <Select
       value={value}
@@ -61,7 +62,10 @@ function DeviceSelect({ value, onChange, physical, disabled = false, hideDefault
       }}
       renderValue={(val) => {
         const ep = physical.find(e => e.id === val);
-        const name = ep ? ep.name : (val === 'Default' ? 'Default' : val);
+        const name = ep ? ep.name
+          : val === 'Default' ? 'Default'
+          : val === 'none'    ? 'No Output'
+          : val;
         return (
           <Stack direction="row" alignItems="center" gap={0.5}>
             <SpeakerIcon sx={{ fontSize: 11, color: 'text.secondary', flexShrink: 0 }} />
@@ -72,6 +76,14 @@ function DeviceSelect({ value, onChange, physical, disabled = false, hideDefault
         );
       }}
     >
+      {showNoOutput && (
+        <MenuItem value="none" sx={{ fontSize: 12 }}>
+          <Stack direction="row" alignItems="center" gap={1}>
+            <VolumeOffIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+            No Output
+          </Stack>
+        </MenuItem>
+      )}
       {!hideDefault && (
         <MenuItem value="Default" sx={{ fontSize: 12 }}>
           <Stack direction="row" alignItems="center" gap={1}>
@@ -213,7 +225,8 @@ function MuteButtonSpacer() {
 // ── System audio strip ────────────────────────────────────────────────────────
 function SystemStrip({ endpoints, defaultDevice, onDefaultDeviceChange, subs = [] }) {
   const { system } = useContext(AudioCtx);
-  const physical = endpoints.filter(e => e.type === 'physical');
+  // Include virtual channels so the system default can be set to a virtual channel.
+  const physical = endpoints;
   const selectValue = defaultDevice || (physical.length > 0 ? physical[0].id : '');
   const [expanded, setExpanded] = useState(false);
 
@@ -642,17 +655,92 @@ function AppGroup({ mainProcess, allSessions, endpoints }) {
   );
 }
 
+// ── Virtual channel strip ─────────────────────────────────────────────────────
+// Shows one of the TheAudio.app virtual endpoints (Games / Media / Voice) with
+// a selector for which physical device its audio should be forwarded to.
+function ChannelStrip({ endpoint, outputId, onOutputChange, physical, defaultDevice }) {
+  const { endpointLevels } = useContext(AudioCtx);
+  const info = endpointLevels[endpoint.id] ?? { peak: 0 };
+  const shortName = endpoint.name.replace('TheAudio.app ', '');
+  // If this virtual channel is the current system default device, "Default" would
+  // route audio back into itself. Hide it to prevent the loop.
+  const wouldLoop = defaultDevice === endpoint.id;
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        ...STRIP_SX,
+        borderColor: 'secondary.dark',
+        '&:hover': { borderColor: 'secondary.main' },
+      }}
+    >
+      <StripBackgroundVisualizer pct={peakToPct(info.peak ?? 0)} />
+
+      <Box sx={{ position: 'relative', zIndex: 1, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+        <Box sx={{ width: '100%', textAlign: 'center' }}>
+          <Box sx={{ height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+            <DeviceHubIcon sx={{ fontSize: 26, color: 'secondary.main' }} />
+          </Box>
+          <ScrollingName name={shortName} />
+          <Typography variant="caption" sx={{ fontSize: 9, color: 'secondary.main', display: 'block' }}>
+            Virtual Channel
+          </Typography>
+        </Box>
+
+        <DeviceSelect
+          value={outputId || 'none'}
+          onChange={onOutputChange}
+          physical={physical}
+          hideDefault={wouldLoop}
+          showNoOutput={true}
+        />
+
+        <Box sx={{ height: 240, py: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Box sx={{
+            width: 8, height: '100%',
+            bgcolor: 'rgba(255,255,255,0.05)',
+            borderRadius: 4,
+            position: 'relative',
+            overflow: 'hidden',
+          }}>
+            <Box sx={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              height: `${peakToPct(info.peak ?? 0)}%`,
+              background: 'linear-gradient(0deg, #00ff88 0%, #00ccff 60%, #7c5cfc 100%)',
+              transition: 'height 0.08s linear',
+              borderRadius: 4,
+            }} />
+          </Box>
+        </Box>
+
+        <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+          {outputId ? 'Routed' : 'No output'}
+        </Typography>
+      </Box>
+    </Paper>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { sessions, endpoints } = useContext(AudioCtx);
-  const [defaultDevice, setDefaultDevice] = useState('');
+  const [defaultDevice,   setDefaultDevice]   = useState('');
+  const [channelOutputs,  setChannelOutputs]  = useState({});
   const scrollRef = useRef(null);
 
   useEffect(() => {
     window.api?.getSettings().then(s => {
       setDefaultDevice(s?.defaultDevice ?? '');
+      setChannelOutputs(s?.channelOutputs ?? {});
     });
   }, []);
+
+  function handleChannelOutputChange(channelKey, deviceId) {
+    const next = { ...channelOutputs, [channelKey]: deviceId };
+    setChannelOutputs(next);
+    window.api?.setChannelOutput(channelKey, deviceId);
+  }
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -711,6 +799,22 @@ export default function Dashboard() {
             isDefault={ep.id === defaultDevice}
           />
         ))}
+
+        {endpoints.filter(e => e.type === 'virtual').length > 0 && <MixerDivider />}
+
+        {endpoints.filter(e => e.type === 'virtual').map(ep => {
+          const key = ep.key || ep.name.replace('TheAudio.app ', '');
+          return (
+            <ChannelStrip
+              key={ep.id}
+              endpoint={ep}
+              outputId={channelOutputs[key] || ''}
+              onOutputChange={(deviceId) => handleChannelOutputChange(key, deviceId)}
+              physical={endpoints.filter(e => e.type === 'physical')}
+              defaultDevice={defaultDevice}
+            />
+          );
+        })}
 
         <MixerDivider />
 

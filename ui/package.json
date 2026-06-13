@@ -29,7 +29,7 @@
     ],
     "extraResources": [
       {
-        "from": "../Source/theaudioapp/x64/Release",
+        "from": "../core/x64/Release",
         "to": "app",
         "filter": [
           "theaudioapp.exe",
@@ -37,12 +37,18 @@
         ]
       },
       {
-        "from": "../Source/tools/soundvolumeview-x64",
-        "to": "app/tools/soundvolumeview-x64"
+        "from": "../Driver/VirtualAudioDriver",
+        "to": "driver",
+        "filter": [
+          "VirtualAudioDriver.inf",
+          "install.ps1",
+          "out/VirtualAudioDriver.sys"
+        ]
       }
     ],
     "win": {
       "icon": "build/icon.png",
+      "requestedExecutionLevel": "requireAdministrator",
       "target": [
         {
           "target": "nsis",
@@ -81,3 +87,4 @@
     "react-router-dom": "^7.1.5"
   }
 }
+
